@@ -1,3 +1,7 @@
+import io
+import sys
+import warnings
+
 from abc import ABC, abstractmethod
 from typing import Any, Callable
 
@@ -6,6 +10,7 @@ from mloggers._log_levels import LogLevel
 # This constant is used to assign an importance level to anything not using the LogLevel enum.
 # It was chosen to be the same as LogLevel.INFO, but it can be changed to any other value.
 DEFAULT_IMPORTANCE = LogLevel.INFO.value['level']
+WARNINGS_DEFAULT = warnings.showwarning
 
 class Logger(ABC):
     """The abstract class for a logger."""
@@ -165,3 +170,55 @@ class Logger(ABC):
         """
 
         self.log(message, LogLevel.DEBUG, *args, **kwargs)
+
+    def redirect_streams(self):
+        """
+        Redirect the standard output and error streams to the logger.
+        WARNING: Experimental feature, this might not work as expected and break the standard output and error streams. Reset the streams with `reset_streams` if needed. As a last resort, restart the kernel.
+        """
+        warnings.warn("Redirecting standard output and error streams to the logger is an experimental feature. This might not work as expected and break the standard output and error streams. Reset the streams with `reset_streams` if needed. As a last resort, restart the kernel.")
+
+        sys.stdout = _RedirectStream(self, LogLevel.INFO, sys.stdout)
+        sys.stderr = _RedirectStream(self, LogLevel.ERROR, sys.stderr)
+
+        # Redirect warnings to the logger
+        warnings.filterwarnings("always")
+        warnings.showwarning = lambda *args, **kwargs: self.warning(str(args[0]))
+
+    def reset_streams(self):
+        """
+        Reset the standard output and error streams to their default values.
+        """
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+
+        # Reset warnings to their default values
+        warnings.resetwarnings()
+        warnings.showwarning = WARNINGS_DEFAULT
+
+class _RedirectStream(io.StringIO):
+    """
+    A custom class to redirect the standard output and error streams to the logger.
+    """
+    def __init__(self, logger: Logger, level: LogLevel, stream: io.StringIO):
+        super().__init__()
+        self._logger = logger
+        self._level = level
+        self._stream = stream
+
+    def write(self, message: str):
+        # Putting the original stream back in place to avoid infinite recursion
+        custom_stdout = sys.stdout
+        sys.stdout = sys.__stdout__
+
+        # Remove the trailing newline character from the message (added by the print function)
+        message = message.rstrip()
+        if message:
+            self._logger.log(message, self._level)
+        
+        # Putting the logger back in place
+        sys.stdout.flush()
+        sys.stdout = custom_stdout
+
+    def flush(self):
+        self._stream.flush()
